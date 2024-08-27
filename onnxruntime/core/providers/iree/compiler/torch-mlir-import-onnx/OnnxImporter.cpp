@@ -9,6 +9,7 @@
 
 #include "OnnxImporter.h"
 
+#include "core/graph/graph_viewer.h"
 #include "mlir-c/BuiltinAttributes.h"
 #include "mlir-c/BuiltinTypes.h"
 
@@ -178,8 +179,8 @@ Status GraphInfo::Initialize() {
   for (const onnx::ValueInfoProto &v : graph_proto_.value_info()) {
     value_info_map_.emplace(v.name(), v);
   }
-  for (const onnx::ValueInfoProto &v : graph_proto_.input()) {
-    declared_inputs_.emplace_back(&v);
+  for (const onnx::ValueInfoProto *v : inputs()) {
+    declared_inputs_.emplace_back(v);
   }
   for (const onnx::ValueInfoProto &v : graph_proto_.output()) {
     outputs_.emplace_back(&v);
@@ -621,7 +622,7 @@ void NodeImporter::PopulateGraphAttrs(MlirOperation container_op) {
       mlirStringAttrGet(context_, toMlirStringRef(m.producer_version())));
 }
 
-Status NodeImporter::ImportAll() {
+Status NodeImporter::ImportAll(const onnxruntime::GraphViewer &gv) {
   // TODO: Consider pulling in initializers on demand since there can be so
   // much unused crap.
   for (auto it : graph_info_.initializer_map()) {
@@ -629,7 +630,7 @@ Status NodeImporter::ImportAll() {
       return failure();
   }
   for (auto it : graph_info_.graph_proto().node()) {
-    if (failed(ImportNode(it)))
+    if (failed(ImportNode(it, gv)))
       return failure();
   }
 
@@ -686,17 +687,17 @@ Status NodeImporter::ImportInitializer(const onnx::TensorProto &initializer) {
   return success();
 }
 
-Status NodeImporter::ImportNode(const onnx::NodeProto &node) {
+Status NodeImporter::ImportNode(const onnx::NodeProto &node, const onnxruntime::GraphViewer &gv) {
   std::string_view op_type = node.op_type();
   // Handle special-form op types that do not go down the generic path.
   if (op_type == "ConstantOfShape") {
     return ImportConstantOfShapeNode(node);
   }
 
-  return ImportGeneralNode(node);
+  return ImportGeneralNode(node, gv);
 }
 
-Status NodeImporter::ImportGeneralNode(const onnx::NodeProto &node) {
+Status NodeImporter::ImportGeneralNode(const onnx::NodeProto &node, const onnxruntime::GraphViewer &gv) {
   MlirLocation loc =
       node.name().empty()
           ? mlirLocationUnknownGet(context_)
@@ -720,7 +721,8 @@ Status NodeImporter::ImportGeneralNode(const onnx::NodeProto &node) {
   std::vector<MlirType> output_types;
   for (auto &output_name : node.output()) {
     const onnx::TypeProto *type_proto =
-        graph_info_.FindTypeProtoForName(output_name);
+        // graph_info_.FindTypeProtoForName(output_name);
+      gv.GetNodeArg(output_name)->TypeAsProto();
     if (!type_proto)
       return failure();
 

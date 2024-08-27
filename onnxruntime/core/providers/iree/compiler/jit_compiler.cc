@@ -170,7 +170,7 @@ common::Status CompilerInvocation::ImportSubgraph(const onnxruntime::GraphViewer
 
   // Reset whole-graph inputs and replace with subgraph inputs.
   subgraph_info.inputs().clear();
-  for (const auto& node_arg : graph_view.GetInputs()) {
+  for (const auto& node_arg : graph_view.GetInputsIncludingInitializers()) {
     const ONNX_NAMESPACE::ValueInfoProto& input_info = node_arg->ToProto();
     // LOGS(session.logger, INFO) << "  input: " << input_info.DebugString();
     subgraph_info.inputs().push_back(&input_info);
@@ -202,7 +202,7 @@ common::Status CompilerInvocation::ImportSubgraph(const onnxruntime::GraphViewer
     graph_view.GetNode(node_indices[i])->ToProto(nodes[i]);
   }
   for (const auto& node : nodes) {
-    if (torch_mlir_onnx::failed(imp.ImportNode(node))) {
+    if (torch_mlir_onnx::failed(imp.ImportNode(node, graph_view))) {
       return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_GRAPH, "Failed to import node '", node.name(), "': ",
                              model_info.error_message(), " (node:\n", node.DebugString(), "\n)", ConsumeDiagnostics());
     }
