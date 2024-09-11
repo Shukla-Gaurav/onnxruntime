@@ -222,11 +222,15 @@ common::Status CompilerInvocation::ImportSubgraph(const onnxruntime::GraphViewer
   return common::Status::OK();
 }
 
-common::Status CompilerInvocation::CompileAndOutputVMFB(iree_compiler_output_t* output) {
+common::Status CompilerInvocation::CompileAndOutputVMFB(iree_compiler_output_t* output, std::string save_to) {
   // Main compilation.
   if (!ireeCompilerInvocationPipeline(inv, IREE_COMPILER_PIPELINE_STD)) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_GRAPH, "IREE compilation error.", ConsumeDiagnostics());
   }
+
+  // Attach the compiled output to a file.
+  save_to.append("compiled_model.vmfb");
+  ireeCompilerOutputOpenFile(save_to.c_str(), &output);
 
   // Output.
   if (auto* err = ireeCompilerInvocationOutputVMBytecode(inv, output)) {

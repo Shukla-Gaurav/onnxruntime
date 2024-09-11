@@ -45,7 +45,7 @@ struct CompilerOutput {
   // Releases ownership of the output, returning a callback that can be used to
   // destroy it at a later date.
   std::function<void()> Release() {
-    iree_compiler_output_t* local_output = output;
+    iree_compiler_output_t* local_output = this->output;
     this->output = nullptr;
     return [local_output]() {
       if (local_output) {
@@ -84,7 +84,7 @@ struct CompilerInvocation {
   common::Status ImportSubgraph(const onnxruntime::GraphViewer& graph_view, const std::string& func_name);
 
   // Compile and output a VMFB.
-  common::Status CompileAndOutputVMFB(iree_compiler_output_t* output);
+  common::Status CompileAndOutputVMFB(iree_compiler_output_t* output, std::string save_to);
 
   // If there are any diagnostics, clears them and returns a loggable string.
   std::string ConsumeDiagnostics();

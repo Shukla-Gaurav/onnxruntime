@@ -33,7 +33,10 @@ IREEExecutionProvider::~IREEExecutionProvider() {
 }
 
 common::Status IREEExecutionProvider::Initialize() {
-  ORT_RETURN_IF_ERROR(iree_ep_rt::HandleIREEStatus(rt_instance_->Initialize()));
+  if (info_.find("device") == info_.end())
+    info_["device"] = "local-task";
+  LOGS(*GetLogger(), INFO) << "IREEExecutionProvider runtime device set as " << info_["device"];
+  ORT_RETURN_IF_ERROR(iree_ep_rt::HandleIREEStatus(rt_instance_->Initialize(info_["device"])));
   return common::Status::OK();
 }
 
@@ -102,15 +105,25 @@ common::Status IREEExecutionProvider::Compile(const std::vector<FusedNodeAndGrap
   // TODO: The target needs to be synchronized with the runtime based on EP options.
   // TODO: We should just be adding the target to the module instead of specifying via
   // flags.
-  std::string device_flag = "--iree-hal-target-backends=";
+  std::string device_flag = "--iree-hal-target-device=";
   if (info_.find("hal_target_device") == info_.end()) {
-    // In case device info is absent, set `llvm-cpu` as default hal-target-backend.
+    // In case device info is absent, set `llvm-cpu` as default hal-target-device.
     device_flag.append("llvm-cpu");
   } else {
     device_flag.append(info_["hal_target_device"]);
   }
-  LOGS(*GetLogger(), INFO) << "IREEExecutionProvider compile: setting device flag as " << device_flag;
+  LOGS(*GetLogger(), INFO) << "IREEExecutionProvider compile: setting flag " << device_flag;
   ORT_RETURN_IF_ERROR(compiler.SetFlag(device_flag.c_str()));
+
+  // Set all the compile-time flags.
+  // TODO: Use ireeCompilerSessionSetFlags API to set all the flags at once.
+  // TODO: support more than one extra flags by parsing the input string.
+  if (info_.find("compile_time_flags") != info_.end()) {
+    std::string extra_flag = info_["compile_time_flags"];
+    LOGS(*GetLogger(), INFO) << "IREEExecutionProvider compile: setting flag " << extra_flag;
+    ORT_RETURN_IF_ERROR(compiler.SetFlag(extra_flag.c_str()));
+  }
+
   ORT_RETURN_IF_ERROR(compiler.Initialize());
   std::string module_name = "ort";
   iree_ep_jit::CompilerInvocation inv(compiler, module_name.c_str());
@@ -137,20 +150,26 @@ common::Status IREEExecutionProvider::Compile(const std::vector<FusedNodeAndGrap
   if (auto* err = ireeCompilerOutputOpenMembuffer(&vmfb_output.output)) {
     return iree_ep_jit::ErrorToStatus(err, "Failure opening compiler output buffer: ");
   }
-  ORT_RETURN_IF_ERROR(inv.CompileAndOutputVMFB(vmfb_output.output));
+
+  // This will save the compiled module to current working directory.
+  if (info_.find("save_to") == info_.end())
+    info_["save_to"] = "";
+  ORT_RETURN_IF_ERROR(inv.CompileAndOutputVMFB(vmfb_output.output, info_["save_to"]));
+  LOGS(*GetLogger(), INFO) << "IREEExecutionProvider compiled vmfb saved at this location " << info_["save_to"];
 
   // Map raw memory.
-  void* vmfb_contents;
-  uint64_t vmfb_size;
-  ORT_RETURN_IF_ERROR(vmfb_output.MapMemory(&vmfb_contents, &vmfb_size));
+  // void* vmfb_contents = nullptr;
+  // uint64_t vmfb_size = 0;
+  // TODO: Map memory instead of storing the compiled module as a file
+  // ORT_RETURN_IF_ERROR(vmfb_output.MapMemory(&vmfb_contents, &vmfb_size));
 
   // Create a new runtime session.
   auto rt_session = std::make_shared<iree_ep_rt::Session>(rt_instance_);
+  // In case device info is absent, set `local-task` as default device.
   ORT_RETURN_IF_ERROR(iree_ep_rt::HandleIREEStatus(rt_session->Initialize()));
 
   // Load the compiled module, releasing our ownership of the CompilerOutput.
-  ORT_RETURN_IF_ERROR(iree_ep_rt::HandleIREEStatus(rt_session->AppendBytecodeModule(
-      vmfb_contents, vmfb_size, vmfb_output.Release())));
+  ORT_RETURN_IF_ERROR(iree_ep_rt::HandleIREEStatus(rt_session->AppendBytecodeModule(info_["save_to"], vmfb_output.Release())));
 
   for (auto& entrypoint_name : entrypoint_names) {
     node_compute_funcs.push_back(CreateNodeComputeFunc(entrypoint_name, rt_session));
